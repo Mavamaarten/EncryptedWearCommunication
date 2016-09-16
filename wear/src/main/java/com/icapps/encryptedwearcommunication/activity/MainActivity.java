@@ -5,10 +5,9 @@ import android.os.Bundle;
 import android.os.Handler;
 import android.support.annotation.NonNull;
 import android.support.annotation.Nullable;
-import android.support.wearable.view.WatchViewStub;
-import android.util.Base64;
 import android.util.Log;
 import android.view.View;
+import android.widget.ProgressBar;
 import android.widget.TextView;
 
 import com.google.android.gms.common.ConnectionResult;
@@ -18,69 +17,48 @@ import com.google.android.gms.wearable.Channel;
 import com.google.android.gms.wearable.ChannelApi;
 import com.google.android.gms.wearable.NodeApi;
 import com.google.android.gms.wearable.Wearable;
-import com.icapps.encryptedwearcommunication.crypto.DHExchange;
-import com.icapps.encryptedwearcommunication.crypto.DHUtils;
 import com.icapps.encryptedwearcommunication.R;
-import com.icapps.encryptedwearcommunication.crypto.SimpleMessageCrypto;
+import com.icapps.encryptedwearcommunication.crypto.EncryptedDataStream;
 
-import java.io.DataInputStream;
-import java.io.DataOutputStream;
 import java.io.IOException;
+import java.io.InputStream;
+import java.io.OutputStream;
 
-import javax.crypto.interfaces.DHPublicKey;
-
-public class MainActivity extends Activity implements ChannelApi.ChannelListener {
+public class MainActivity extends Activity implements ChannelApi.ChannelListener, EncryptedDataStream.StreamListener {
 
     private static String TAG = "WearableMainActivity";
 
     private TextView mTextView;
+    private ProgressBar mProgressBar;
+
     private GoogleApiClient googleApiClient;
-
-    private DataOutputStream outputStream;
-    private DataInputStream inputStream;
-
-    private DHExchange dhExchange;
-    private SimpleMessageCrypto messageCrypto;
+    private EncryptedDataStream encryptedDataStream;
 
     int pingRequestCount = 0;
-
-    private byte[] shortenSecretKey(final byte[] longKey) {
-        try {
-            final byte[] shortenedKey = new byte[8];
-            System.arraycopy(longKey, 0, shortenedKey, 0, shortenedKey.length);
-            return shortenedKey;
-        } catch (Exception e) {
-            e.printStackTrace();
-        }
-        return null;
-    }
 
     @Override
     protected void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
         setContentView(R.layout.activity_main);
 
-        final WatchViewStub stub = (WatchViewStub) findViewById(R.id.watch_view_stub);
-        stub.setOnLayoutInflatedListener(new WatchViewStub.OnLayoutInflatedListener() {
+        mTextView = (TextView) findViewById(R.id.text);
+        mTextView.setOnClickListener(new View.OnClickListener() {
             @Override
-            public void onLayoutInflated(WatchViewStub stub) {
-                mTextView = (TextView) stub.findViewById(R.id.text);
-                mTextView.setOnClickListener(new View.OnClickListener() {
-                    @Override
-                    public void onClick(View view) {
-                        if (messageCrypto == null) return;
+            public void onClick(View view) {
+                if (encryptedDataStream == null) return;
+                if (encryptedDataStream.getState() != EncryptedDataStream.State.LISTENING)
+                    return;
 
-                        byte[] encryptedMessage = messageCrypto.encryptMessage("Ping " + ++pingRequestCount);
-                        try {
-                            outputStream.writeInt(encryptedMessage.length);
-                            outputStream.write(encryptedMessage);
-                        } catch (IOException e) {
-                            e.printStackTrace();
-                        }
-                    }
-                });
+                try {
+                    String messageToSend = "Ping! " + ++pingRequestCount;
+                    encryptedDataStream.sendData(messageToSend.getBytes());
+                } catch (IOException e) {
+                    e.printStackTrace();
+                }
             }
         });
+
+        mProgressBar = (ProgressBar) findViewById(R.id.loading);
     }
 
     @Override
@@ -115,12 +93,8 @@ public class MainActivity extends Activity implements ChannelApi.ChannelListener
     @Override
     protected void onStop() {
         super.onStop();
-
-        try {
-            outputStream.close();
-            inputStream.close();
-        } catch (IOException e) {
-            e.printStackTrace();
+        if (encryptedDataStream != null) {
+            encryptedDataStream.stopListening();
         }
     }
 
@@ -153,90 +127,35 @@ public class MainActivity extends Activity implements ChannelApi.ChannelListener
     }
 
     @Override
-    public void onChannelOpened(Channel channel) {
+    public void onChannelOpened(final Channel channel) {
         Log.d(TAG, "Channel opened");
-
-        dhExchange = new DHExchange(512);
 
         channel.getOutputStream(googleApiClient).setResultCallback(new ResultCallback<Channel.GetOutputStreamResult>() {
             @Override
-            public void onResult(@NonNull Channel.GetOutputStreamResult getOutputStreamResult) {
-                outputStream = new DataOutputStream(getOutputStreamResult.getOutputStream());
-
-                new Thread(new Runnable() {
+            public void onResult(@NonNull final Channel.GetOutputStreamResult getOutputStreamResult) {
+                channel.getInputStream(googleApiClient).setResultCallback(new ResultCallback<Channel.GetInputStreamResult>() {
                     @Override
-                    public void run() {
-                        onOutputStreamOpened();
+                    public void onResult(@NonNull Channel.GetInputStreamResult getInputStreamResult) {
+                        onStreamsOpened(getInputStreamResult.getInputStream(), getOutputStreamResult.getOutputStream());
                     }
-                }).start();
+                });
             }
         });
-        channel.getInputStream(googleApiClient).setResultCallback(new ResultCallback<Channel.GetInputStreamResult>() {
+    }
+
+    private void onStreamsOpened(InputStream inputStream, OutputStream outputStream) {
+        encryptedDataStream = new EncryptedDataStream(inputStream, outputStream, 512, this);
+        encryptedDataStream.performKeyExchange(new EncryptedDataStream.KeyExchangeCallback() {
             @Override
-            public void onResult(@NonNull Channel.GetInputStreamResult getInputStreamResult) {
-                inputStream = new DataInputStream(getInputStreamResult.getInputStream());
+            public void onKeyExchangeCompleted() {
+                encryptedDataStream.startListening(MainActivity.this);
+            }
 
-                new Thread(new Runnable() {
-                    @Override
-                    public void run() {
-                        onInputStreamOpened();
-                    }
-                }).start();
+            @Override
+            public void onKeyExchangeFailed(Exception exception) {
+                Log.d(TAG, "Key exchange failed", exception);
             }
         });
-    }
-
-    public void onOutputStreamOpened() {
-        try {
-            Log.d(TAG, "Output stream opened - Sending watch public key");
-
-            // Send our public key to phone
-            final byte[] encodedPublicKey = DHUtils.keyToBytes(dhExchange.getPublicKey());
-            outputStream.writeInt(encodedPublicKey.length);
-            outputStream.write(encodedPublicKey);
-
-            Log.d(TAG, "Public watch key sent: " + Base64.encodeToString(encodedPublicKey, Base64.NO_WRAP));
-        } catch (IOException e) {
-            e.printStackTrace();
-        }
-    }
-
-    public void onInputStreamOpened() {
-        try {
-            Log.d(TAG, "Inputstream opened - Receiving watch public key");
-
-            // Read watch public key
-            final byte[] receivedPublicKeyBytes = new byte[inputStream.readInt()];
-            inputStream.readFully(receivedPublicKeyBytes);
-
-            final DHPublicKey receivedPublicKey = DHUtils.bytesToPublicKey(dhExchange.getPublicKey().getParams(), receivedPublicKeyBytes);
-            dhExchange.setReceivedPublicKey(receivedPublicKey);
-
-            Log.d(TAG, "Received phone public key: " + Base64.encodeToString(receivedPublicKeyBytes, Base64.NO_WRAP));
-
-            // Generate common secret
-            final byte[] shortenedCommonSecret = shortenSecretKey(dhExchange.generateCommonSecretKey());
-            messageCrypto = new SimpleMessageCrypto(shortenedCommonSecret);
-
-            // Listen for encrypted messages
-            while (!Thread.currentThread().isInterrupted()) {
-                if (inputStream.available() > 0) {
-                    byte[] receivedBytes = new byte[inputStream.readInt()];
-                    inputStream.readFully(receivedBytes);
-
-                    final String decryptedMessage = messageCrypto.decryptMessage(receivedBytes);
-
-                    runOnUiThread(new Runnable() {
-                        @Override
-                        public void run() {
-                            mTextView.setText("Received message: \"" + decryptedMessage + "\"");
-                        }
-                    });
-                }
-            }
-        } catch (IOException e) {
-            e.printStackTrace();
-        }
     }
 
     @Override
@@ -252,5 +171,36 @@ public class MainActivity extends Activity implements ChannelApi.ChannelListener
     @Override
     public void onOutputClosed(Channel channel, int i, int i1) {
         Log.d(TAG, "Output closed");
+    }
+
+    @Override
+    public void onStateChanged(final EncryptedDataStream.State newState) {
+        Log.d(TAG, newState.name());
+
+        runOnUiThread(new Runnable() {
+            @Override
+            public void run() {
+                if (newState == EncryptedDataStream.State.LISTENING) {
+                    mTextView.setVisibility(View.VISIBLE);
+                    mProgressBar.setVisibility(View.GONE);
+                }
+            }
+        });
+    }
+
+    @Override
+    public void onDataReceived(byte[] data) {
+        final String receivedMessage = new String(data);
+        runOnUiThread(new Runnable() {
+            @Override
+            public void run() {
+                mTextView.setText(receivedMessage);
+            }
+        });
+    }
+
+    @Override
+    public void onStreamException(Exception ex) {
+        Log.d(TAG, "Stream exception", ex);
     }
 }
