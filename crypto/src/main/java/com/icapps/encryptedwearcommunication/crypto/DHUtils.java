@@ -26,7 +26,7 @@ import javax.crypto.spec.DHPublicKeySpec;
  *
  * @author Felix Bruns <felixbruns@web.de>
  */
-public class DH {
+public class DHUtils {
     /**
      * {@link KeyPairGenerator} object for creating new key pairs.
      */
@@ -43,9 +43,9 @@ public class DH {
     private static KeyFactory keyFactory;
 
     /**
-     * {@link DH} instance for creating new {@link DHKeyPair} objects.
+     * {@link DHUtils} instance for creating new {@link DHKeyPair} objects.
      */
-    private static DH instance;
+    private static DHUtils instance;
 
     /**
      * Generator to use for key generation.
@@ -85,7 +85,7 @@ public class DH {
         }
 
 		/* Create DH instance for creating new DHKeyPair objects. */
-        instance = new DH();
+        instance = new DHUtils();
     }
 
     /**

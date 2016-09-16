@@ -18,15 +18,15 @@ import com.google.android.gms.wearable.Channel;
 import com.google.android.gms.wearable.ChannelApi;
 import com.google.android.gms.wearable.NodeApi;
 import com.google.android.gms.wearable.Wearable;
-import com.icapps.hellowearandroid.R;
-import com.icapps.encryptedwearcommunication.crypto.DH;
+import com.icapps.encryptedwearcommunication.crypto.DHExchange;
+import com.icapps.encryptedwearcommunication.crypto.DHUtils;
+import com.icapps.encryptedwearcommunication.R;
 import com.icapps.encryptedwearcommunication.crypto.SimpleMessageCrypto;
 
 import java.io.DataInputStream;
 import java.io.DataOutputStream;
 import java.io.IOException;
 
-import javax.crypto.interfaces.DHPrivateKey;
 import javax.crypto.interfaces.DHPublicKey;
 
 public class MainActivity extends Activity implements ChannelApi.ChannelListener {
@@ -39,41 +39,10 @@ public class MainActivity extends Activity implements ChannelApi.ChannelListener
     private DataOutputStream outputStream;
     private DataInputStream inputStream;
 
-    private DHPrivateKey privateKey;
-    private DHPublicKey publicKey;
-    private DHPublicKey receivedPublicKey;
-
+    private DHExchange dhExchange;
     private SimpleMessageCrypto messageCrypto;
 
     int pingRequestCount = 0;
-
-    private void generateKeys() {
-        Log.d(TAG, "Generating watch secret key");
-
-        try {
-            final DH.DHKeyPair keyPair = DH.generateKeyPair(512);
-
-            privateKey = keyPair.getPrivateKey();
-            publicKey = keyPair.getPublicKey();
-
-            Log.d(TAG, "Generated watch secret key");
-        } catch (Exception e) {
-            e.printStackTrace();
-        }
-    }
-
-    public void generateCommonSecretKey() {
-        Log.d(TAG, "Generating common secret key");
-
-        try {
-            final byte[] secretKey = shortenSecretKey(DH.computeSharedKey(privateKey, receivedPublicKey));
-            messageCrypto = new SimpleMessageCrypto(secretKey);
-
-            Log.d(TAG, "Generated common secret key!");
-        } catch (Exception e) {
-            e.printStackTrace();
-        }
-    }
 
     private byte[] shortenSecretKey(final byte[] longKey) {
         try {
@@ -131,12 +100,14 @@ public class MainActivity extends Activity implements ChannelApi.ChannelListener
                     public void onConnectionSuspended(int i) {
                         Log.d(TAG, "Google API suspended");
                     }
-                }).addOnConnectionFailedListener(new GoogleApiClient.OnConnectionFailedListener() {
+                })
+                .addOnConnectionFailedListener(new GoogleApiClient.OnConnectionFailedListener() {
                     @Override
                     public void onConnectionFailed(@NonNull ConnectionResult connectionResult) {
                         Log.d(TAG, "Google API connection failed");
                     }
-                }).addApi(Wearable.API)
+                })
+                .addApi(Wearable.API)
                 .build();
         googleApiClient.connect();
     }
@@ -171,8 +142,6 @@ public class MainActivity extends Activity implements ChannelApi.ChannelListener
                 Log.d(TAG, "Found a node. Opening channel...");
                 String nodeId = getConnectedNodesResult.getNodes().get(0).getId();
 
-                generateKeys();
-
                 Wearable.ChannelApi.openChannel(googleApiClient, nodeId, "/channel").setResultCallback(new ResultCallback<ChannelApi.OpenChannelResult>() {
                     @Override
                     public void onResult(@NonNull ChannelApi.OpenChannelResult openChannelResult) {
@@ -186,6 +155,8 @@ public class MainActivity extends Activity implements ChannelApi.ChannelListener
     @Override
     public void onChannelOpened(Channel channel) {
         Log.d(TAG, "Channel opened");
+
+        dhExchange = new DHExchange(512);
 
         channel.getOutputStream(googleApiClient).setResultCallback(new ResultCallback<Channel.GetOutputStreamResult>() {
             @Override
@@ -219,8 +190,8 @@ public class MainActivity extends Activity implements ChannelApi.ChannelListener
         try {
             Log.d(TAG, "Output stream opened - Sending watch public key");
 
-            final byte[] encodedPublicKey = DH.keyToBytes(publicKey);
-
+            // Send our public key to phone
+            final byte[] encodedPublicKey = DHUtils.keyToBytes(dhExchange.getPublicKey());
             outputStream.writeInt(encodedPublicKey.length);
             outputStream.write(encodedPublicKey);
 
@@ -234,17 +205,22 @@ public class MainActivity extends Activity implements ChannelApi.ChannelListener
         try {
             Log.d(TAG, "Inputstream opened - Receiving watch public key");
 
-            byte[] receivedPublicKeyBytes = new byte[inputStream.readInt()];
+            // Read watch public key
+            final byte[] receivedPublicKeyBytes = new byte[inputStream.readInt()];
             inputStream.readFully(receivedPublicKeyBytes);
 
-            this.receivedPublicKey = DH.bytesToPublicKey(publicKey.getParams(), receivedPublicKeyBytes);
+            final DHPublicKey receivedPublicKey = DHUtils.bytesToPublicKey(dhExchange.getPublicKey().getParams(), receivedPublicKeyBytes);
+            dhExchange.setReceivedPublicKey(receivedPublicKey);
 
             Log.d(TAG, "Received phone public key: " + Base64.encodeToString(receivedPublicKeyBytes, Base64.NO_WRAP));
 
-            generateCommonSecretKey();
+            // Generate common secret
+            final byte[] shortenedCommonSecret = shortenSecretKey(dhExchange.generateCommonSecretKey());
+            messageCrypto = new SimpleMessageCrypto(shortenedCommonSecret);
 
+            // Listen for encrypted messages
             while (!Thread.currentThread().isInterrupted()) {
-                if(inputStream.available() > 0){
+                if (inputStream.available() > 0) {
                     byte[] receivedBytes = new byte[inputStream.readInt()];
                     inputStream.readFully(receivedBytes);
 

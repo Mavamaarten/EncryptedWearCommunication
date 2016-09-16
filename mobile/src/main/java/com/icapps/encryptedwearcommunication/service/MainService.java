@@ -12,14 +12,14 @@ import com.google.android.gms.common.api.ResultCallback;
 import com.google.android.gms.wearable.Channel;
 import com.google.android.gms.wearable.Wearable;
 import com.google.android.gms.wearable.WearableListenerService;
-import com.icapps.encryptedwearcommunication.crypto.DH;
+import com.icapps.encryptedwearcommunication.crypto.DHExchange;
+import com.icapps.encryptedwearcommunication.crypto.DHUtils;
 import com.icapps.encryptedwearcommunication.crypto.SimpleMessageCrypto;
 
 import java.io.DataInputStream;
 import java.io.DataOutputStream;
 import java.io.IOException;
 
-import javax.crypto.interfaces.DHPrivateKey;
 import javax.crypto.interfaces.DHPublicKey;
 
 /**
@@ -33,41 +33,10 @@ public class MainService extends WearableListenerService implements GoogleApiCli
     private DataInputStream inputStream;
     private DataOutputStream outputStream;
 
-    private DHPrivateKey privateKey;
-    private DHPublicKey publicKey;
-    private DHPublicKey receivedPublicKey;
-
+    private DHExchange dhExchange;
     private SimpleMessageCrypto messageCrypto;
 
     int pongResponseCount = 0;
-
-    private void generateKeys() {
-        Log.d(TAG, "Generating phone secret key");
-
-        try {
-            final DH.DHKeyPair keyPair = DH.generateKeyPair(512);
-
-            privateKey = keyPair.getPrivateKey();
-            publicKey = keyPair.getPublicKey();
-
-            Log.d(TAG, "Generated phone secret key");
-        } catch (Exception e) {
-            e.printStackTrace();
-        }
-    }
-
-    public void generateCommonSecretKey() {
-        Log.d(TAG, "Generating common secret key");
-
-        try {
-            final byte[] secretKey = shortenSecretKey(DH.computeSharedKey(privateKey, receivedPublicKey));
-            messageCrypto = new SimpleMessageCrypto(secretKey);
-
-            Log.d(TAG, "Generated common secret key!");
-        } catch (Exception e) {
-            e.printStackTrace();
-        }
-    }
 
     private byte[] shortenSecretKey(final byte[] longKey) {
         try {
@@ -86,7 +55,7 @@ public class MainService extends WearableListenerService implements GoogleApiCli
         System.out.println();
         Log.d(TAG, "Service created");
 
-        generateKeys();
+        dhExchange = new DHExchange(512);
 
         if (mGoogleApiClient == null) {
             mGoogleApiClient = new GoogleApiClient.Builder(this)
@@ -163,8 +132,8 @@ public class MainService extends WearableListenerService implements GoogleApiCli
         try {
             Log.d(TAG, "Output stream opened - Sending phone public key");
 
-            final byte[] encodedPublicKey = DH.keyToBytes(publicKey);
-
+            // Send our public key to watch
+            final byte[] encodedPublicKey = DHUtils.keyToBytes(dhExchange.getPublicKey());
             outputStream.writeInt(encodedPublicKey.length);
             outputStream.write(encodedPublicKey);
 
@@ -178,15 +147,20 @@ public class MainService extends WearableListenerService implements GoogleApiCli
         try {
             Log.d(TAG, "Inputstream opened - Receiving watch public key");
 
+            // Read phone public key
             byte[] receivedPublicKeyBytes = new byte[inputStream.readInt()];
             inputStream.readFully(receivedPublicKeyBytes);
 
-            this.receivedPublicKey = DH.bytesToPublicKey(publicKey.getParams(), receivedPublicKeyBytes);
+            final DHPublicKey receivedPublicKey = DHUtils.bytesToPublicKey(dhExchange.getPublicKey().getParams(), receivedPublicKeyBytes);
+            dhExchange.setReceivedPublicKey(receivedPublicKey);
 
             Log.d(TAG, "Received watch public key: " + Base64.encodeToString(receivedPublicKeyBytes, Base64.NO_WRAP));
 
-            generateCommonSecretKey();
+            // Generate common secret
+            final byte[] shortenedCommonSecret = shortenSecretKey(dhExchange.generateCommonSecretKey());
+            messageCrypto = new SimpleMessageCrypto(shortenedCommonSecret);
 
+            // Listen for encrypted messages
             while (!Thread.currentThread().isInterrupted()) {
                 if(inputStream.available() > 0){
                     byte[] receivedBytes = new byte[inputStream.readInt()];
