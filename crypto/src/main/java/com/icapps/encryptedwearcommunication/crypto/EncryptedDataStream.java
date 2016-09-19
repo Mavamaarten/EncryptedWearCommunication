@@ -51,9 +51,11 @@ public class EncryptedDataStream {
         }
 
         try {
+            // Generate a random IV
             final byte[] iv = new byte[16];
             secureRandom.nextBytes(iv);
 
+            // Initialize our cipher using the IV and encrypt the data with it
             final AlgorithmParameterSpec algorithmParameterSpec = new IvParameterSpec(iv);
             final Cipher encryptCipher = Cipher.getInstance("AES/CBC/PKCS5Padding");
             encryptCipher.init(Cipher.ENCRYPT_MODE, sharedSecret, algorithmParameterSpec);
@@ -96,7 +98,7 @@ public class EncryptedDataStream {
             return;
         }
 
-        // Generate common secret
+        // Generate the common secret
         sharedSecret = dhExchange.generateCommonSecretKey();
 
         setState(State.EXCHANGED);
@@ -120,12 +122,15 @@ public class EncryptedDataStream {
             try {
                 if (dataInputStream.available() <= 0) continue;
 
+                // Read the data
                 final byte[] data = new byte[dataInputStream.readInt()];
                 dataInputStream.readFully(data);
 
+                // Read the IV
                 final byte[] iv = new byte[16];
                 dataInputStream.readFully(iv);
 
+                // Initialize cipher using IV and decrypt the data
                 final AlgorithmParameterSpec algorithmParameterSpec = new IvParameterSpec(iv);
                 final Cipher decryptCipher = Cipher.getInstance("AES/CBC/PKCS5Padding");
                 decryptCipher.init(Cipher.DECRYPT_MODE, sharedSecret, algorithmParameterSpec);
