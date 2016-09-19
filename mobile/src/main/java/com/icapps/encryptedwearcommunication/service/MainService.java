@@ -13,9 +13,12 @@ import com.google.android.gms.wearable.Wearable;
 import com.google.android.gms.wearable.WearableListenerService;
 import com.icapps.encryptedwearcommunication.crypto.EncryptedDataStream;
 
+import org.bouncycastle.jce.provider.BouncyCastleProvider;
+
 import java.io.IOException;
 import java.io.InputStream;
 import java.io.OutputStream;
+import java.security.Security;
 
 /**
  * Created by maartenvangiel on 15/09/16.
@@ -32,7 +35,8 @@ public class MainService extends WearableListenerService implements GoogleApiCli
     @Override
     public void onCreate() {
         super.onCreate();
-        System.out.println();
+        Security.addProvider(new BouncyCastleProvider()); // Probably needs to go in custom Application rather than onCreate() of Service
+
         Log.d(TAG, "Service created");
 
         if (mGoogleApiClient == null) {

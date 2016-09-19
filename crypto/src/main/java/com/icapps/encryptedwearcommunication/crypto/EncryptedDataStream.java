@@ -60,7 +60,7 @@ public class EncryptedDataStream {
 
             // Initialize our cipher using the IV and encrypt the data with it
             final AlgorithmParameterSpec algorithmParameterSpec = new GCMParameterSpec(GCM_TAG_LENGTH * 8, iv);
-            final Cipher encryptCipher = Cipher.getInstance("AES/GCM/NoPadding");
+            final Cipher encryptCipher = Cipher.getInstance("AES/GCM/NoPadding", "BC");
             encryptCipher.init(Cipher.ENCRYPT_MODE, sharedSecret, algorithmParameterSpec);
             final byte[] encryptedData = encryptCipher.doFinal(data);
 
@@ -134,7 +134,7 @@ public class EncryptedDataStream {
 
                 // Initialize cipher using IV and decrypt the data
                 final AlgorithmParameterSpec algorithmParameterSpec = new GCMParameterSpec(GCM_TAG_LENGTH * 8, iv);
-                final Cipher decryptCipher = Cipher.getInstance("AES/GCM/NoPadding");
+                final Cipher decryptCipher = Cipher.getInstance("AES/GCM/NoPadding", "BC");
                 decryptCipher.init(Cipher.DECRYPT_MODE, sharedSecret, algorithmParameterSpec);
 
                 listener.onDataReceived(decryptCipher.doFinal(data));

@@ -20,9 +20,12 @@ import com.google.android.gms.wearable.Wearable;
 import com.icapps.encryptedwearcommunication.R;
 import com.icapps.encryptedwearcommunication.crypto.EncryptedDataStream;
 
+import org.bouncycastle.jce.provider.BouncyCastleProvider;
+
 import java.io.IOException;
 import java.io.InputStream;
 import java.io.OutputStream;
+import java.security.Security;
 
 public class MainActivity extends Activity implements ChannelApi.ChannelListener, EncryptedDataStream.StreamListener {
 
@@ -39,6 +42,8 @@ public class MainActivity extends Activity implements ChannelApi.ChannelListener
     @Override
     protected void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
+
+        Security.addProvider(new BouncyCastleProvider()); // Probably needs to go in custom Application rather than onCreate() of Activity
         setContentView(R.layout.activity_main);
 
         mTextView = (TextView) findViewById(R.id.text);
