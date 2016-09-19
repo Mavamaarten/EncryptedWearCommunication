@@ -5,15 +5,11 @@ import java.io.DataOutputStream;
 import java.io.IOException;
 import java.io.InputStream;
 import java.io.OutputStream;
-import java.security.InvalidAlgorithmParameterException;
-import java.security.InvalidKeyException;
-import java.security.NoSuchAlgorithmException;
+import java.security.GeneralSecurityException;
+import java.security.SecureRandom;
 import java.security.spec.AlgorithmParameterSpec;
 
-import javax.crypto.BadPaddingException;
 import javax.crypto.Cipher;
-import javax.crypto.IllegalBlockSizeException;
-import javax.crypto.NoSuchPaddingException;
 import javax.crypto.SecretKey;
 import javax.crypto.interfaces.DHPublicKey;
 import javax.crypto.spec.IvParameterSpec;
@@ -22,26 +18,22 @@ import javax.crypto.spec.IvParameterSpec;
  * Created by maartenvangiel on 16/09/16.
  */
 public class EncryptedDataStream {
-
-    private byte[] AES_IV = {43, 59, 40, 72, 64, 66, 28, 101, 58, 17, 12, 35, 54, 55, 32, 118};
-
     private StreamListener listener;
 
     private DataInputStream dataInputStream;
     private DataOutputStream dataOutputStream;
     private DHExchange dhExchange;
 
-    private Cipher encryptCipher;
-    private Cipher decryptCipher;
-
     private SecretKey sharedSecret;
     private State state = State.NOT_EXCHANGED;
+    private SecureRandom secureRandom;
 
     public EncryptedDataStream(InputStream inputStream, OutputStream outputStream, int keySize, StreamListener listener) {
         this.listener = listener;
         this.dataInputStream = new DataInputStream(inputStream);
         this.dataOutputStream = new DataOutputStream(outputStream);
         dhExchange = new DHExchange(keySize);
+        secureRandom = new SecureRandom();
     }
 
     private void setState(State state) {
@@ -59,10 +51,18 @@ public class EncryptedDataStream {
         }
 
         try {
+            final byte[] iv = new byte[16];
+            secureRandom.nextBytes(iv);
+
+            final AlgorithmParameterSpec algorithmParameterSpec = new IvParameterSpec(iv);
+            final Cipher encryptCipher = Cipher.getInstance("AES/CBC/PKCS5Padding");
+            encryptCipher.init(Cipher.ENCRYPT_MODE, sharedSecret, algorithmParameterSpec);
+
             final byte[] encryptedData = encryptCipher.doFinal(data);
 
             dataOutputStream.writeInt(encryptedData.length);
             dataOutputStream.write(encryptedData);
+            dataOutputStream.write(iv);
         } catch (Exception ex) {
             listener.onStreamException(ex);
         }
@@ -87,7 +87,7 @@ public class EncryptedDataStream {
 
         // Receive the other party's public key
         try {
-            byte[] receivedPublicKeyBytes = new byte[dataInputStream.readInt()];
+            final byte[] receivedPublicKeyBytes = new byte[dataInputStream.readInt()];
             dataInputStream.readFully(receivedPublicKeyBytes);
             final DHPublicKey receivedPublicKey = DHUtils.bytesToPublicKey(dhExchange.getPublicKey().getParams(), receivedPublicKeyBytes);
             dhExchange.setReceivedPublicKey(receivedPublicKey);
@@ -97,20 +97,7 @@ public class EncryptedDataStream {
         }
 
         // Generate common secret
-        try {
-            sharedSecret = dhExchange.generateCommonSecretKey();
-
-            final AlgorithmParameterSpec algorithmParameterSpec = new IvParameterSpec(AES_IV);
-
-            encryptCipher = Cipher.getInstance("AES/CBC/PKCS5Padding");
-            encryptCipher.init(Cipher.ENCRYPT_MODE, sharedSecret, algorithmParameterSpec);
-
-            decryptCipher = Cipher.getInstance("AES/CBC/PKCS5Padding");
-            decryptCipher.init(Cipher.DECRYPT_MODE, sharedSecret, algorithmParameterSpec);
-        } catch (NoSuchPaddingException | NoSuchAlgorithmException | InvalidKeyException | InvalidAlgorithmParameterException ex) {
-            callback.onKeyExchangeFailed(ex);
-            return;
-        }
+        sharedSecret = dhExchange.generateCommonSecretKey();
 
         setState(State.EXCHANGED);
         callback.onKeyExchangeCompleted();
@@ -136,8 +123,15 @@ public class EncryptedDataStream {
                 final byte[] data = new byte[dataInputStream.readInt()];
                 dataInputStream.readFully(data);
 
+                final byte[] iv = new byte[16];
+                dataInputStream.readFully(iv);
+
+                final AlgorithmParameterSpec algorithmParameterSpec = new IvParameterSpec(iv);
+                final Cipher decryptCipher = Cipher.getInstance("AES/CBC/PKCS5Padding");
+                decryptCipher.init(Cipher.DECRYPT_MODE, sharedSecret, algorithmParameterSpec);
+
                 listener.onDataReceived(decryptCipher.doFinal(data));
-            } catch (IOException | BadPaddingException | IllegalBlockSizeException e) {
+            } catch (IOException | GeneralSecurityException e) {
                 listener.onStreamException(e);
                 setState(EncryptedDataStream.State.CLOSED);
                 return;
@@ -157,7 +151,6 @@ public class EncryptedDataStream {
             e.printStackTrace();
         }
     }
-
 
     public enum State {
         NOT_EXCHANGED,
