@@ -22,28 +22,24 @@ public class EncryptedDataStream {
 
     private StreamListener listener;
 
-    private DataInputStream inputStream;
-    private DataOutputStream outputStream;
+    private DataInputStream dataInputStream;
+    private DataOutputStream dataOutputStream;
     private DHExchange dhExchange;
 
-    private SendPublicKeyThread sendPublicKeyThread;
-    private ReceivePublicKeyThread receivePublicKeyThread;
-    private InputStreamThread inputStreamThread;
-
-    private SecretKeySpec secretKeySpec;
-    private Cipher cipher;
+    private Cipher encryptCipher;
+    private Cipher decryptCipher;
 
     private byte[] sharedSecret;
     private State state = State.NOT_EXCHANGED;
 
     public EncryptedDataStream(InputStream inputStream, OutputStream outputStream, int keySize, StreamListener listener) {
         this.listener = listener;
-        this.inputStream = new DataInputStream(inputStream);
-        this.outputStream = new DataOutputStream(outputStream);
+        this.dataInputStream = new DataInputStream(inputStream);
+        this.dataOutputStream = new DataOutputStream(outputStream);
         dhExchange = new DHExchange(keySize);
     }
 
-    private void setState(State state){
+    private void setState(State state) {
         this.state = state;
         listener.onStateChanged(state);
     }
@@ -58,28 +54,58 @@ public class EncryptedDataStream {
         }
 
         try {
-            final byte[] encryptedData = cipher.doFinal(data);
-            outputStream.writeInt(encryptedData.length);
-            outputStream.write(encryptedData);
-        } catch (BadPaddingException | IllegalBlockSizeException e) {
-            throw new SecurityException("Error encrypting data", e);
+            final byte[] encryptedData = encryptCipher.doFinal(data);
+            dataOutputStream.writeInt(encryptedData.length);
+            dataOutputStream.write(encryptedData);
+        } catch (Exception ex) {
+            listener.onStreamException(ex);
         }
     }
 
     public void performKeyExchange(final KeyExchangeCallback callback) {
-        if ((sendPublicKeyThread != null && sendPublicKeyThread.isAlive()) ||
-                (receivePublicKeyThread != null && receivePublicKeyThread.isAlive())) {
-            callback.onKeyExchangeFailed(new IllegalStateException("Key exchange already in progress"));
+        if (state == State.LISTENING || state == State.EXCHANGING) {
+            callback.onKeyExchangeFailed(new IllegalStateException("Already listening or exchanging"));
+        }
+
+        setState(State.EXCHANGING);
+
+        // Send our public key
+        try {
+            final byte[] encodedPublicKey = DHUtils.keyToBytes(dhExchange.getPublicKey());
+            dataOutputStream.writeInt(encodedPublicKey.length);
+            dataOutputStream.write(encodedPublicKey);
+        } catch (IOException ex) {
+            callback.onKeyExchangeFailed(ex);
             return;
         }
 
-        sendPublicKeyThread = new SendPublicKeyThread(callback);
-        sendPublicKeyThread.start();
+        // Receive the other party's public key
+        try {
+            byte[] receivedPublicKeyBytes = new byte[dataInputStream.readInt()];
+            dataInputStream.readFully(receivedPublicKeyBytes);
+            final DHPublicKey receivedPublicKey = DHUtils.bytesToPublicKey(dhExchange.getPublicKey().getParams(), receivedPublicKeyBytes);
+            dhExchange.setReceivedPublicKey(receivedPublicKey);
+        } catch (IOException ex) {
+            callback.onKeyExchangeFailed(ex);
+            return;
+        }
 
-        receivePublicKeyThread = new ReceivePublicKeyThread(callback);
-        receivePublicKeyThread.start();
+        // Generate common secret
+        try {
+            sharedSecret = shortenSecretKey(dhExchange.generateCommonSecretKey()); // generate key and shorten to 8 bytes for DES
 
-        setState(State.EXCHANGING);
+            final SecretKeySpec secretKeySpec = new SecretKeySpec(sharedSecret, "DES");
+            encryptCipher = Cipher.getInstance("DES/ECB/PKCS5Padding");
+            encryptCipher.init(Cipher.ENCRYPT_MODE, secretKeySpec);
+            decryptCipher = Cipher.getInstance("DES/ECB/PKCS5Padding");
+            decryptCipher.init(Cipher.DECRYPT_MODE, secretKeySpec);
+        } catch (NoSuchPaddingException | NoSuchAlgorithmException | InvalidKeyException ex) {
+            callback.onKeyExchangeFailed(ex);
+            return;
+        }
+
+        setState(State.EXCHANGED);
+        callback.onKeyExchangeCompleted();
     }
 
     public void startListening(final StreamListener listener) {
@@ -88,28 +114,37 @@ public class EncryptedDataStream {
             return;
         }
 
-        if (inputStreamThread != null && inputStreamThread.isAlive()) {
+        if (state == State.LISTENING) {
             listener.onStreamException(new IllegalStateException("Inputstream thread already running"));
             return;
         }
 
-        inputStreamThread = new InputStreamThread();
-        inputStreamThread.start();
+        setState(EncryptedDataStream.State.LISTENING);
+
+        while (!(Thread.currentThread().isInterrupted() || state == EncryptedDataStream.State.CLOSED)) {
+            try {
+                if (dataInputStream.available() <= 0) continue;
+
+                final byte[] data = new byte[dataInputStream.readInt()];
+                dataInputStream.readFully(data);
+
+                listener.onDataReceived(decryptCipher.doFinal(data));
+            } catch (IOException | BadPaddingException | IllegalBlockSizeException e) {
+                listener.onStreamException(e);
+                setState(EncryptedDataStream.State.CLOSED);
+                return;
+            }
+        }
+
+        setState(EncryptedDataStream.State.CLOSED);
     }
 
-    public void stopListening(){
-        if(sendPublicKeyThread != null){
-            sendPublicKeyThread.interrupt();
-        }
-        if(receivePublicKeyThread != null){
-            receivePublicKeyThread.interrupt();
-        }
-        if(inputStreamThread != null){
-            inputStreamThread.interrupt();
-        }
-        try{
-            inputStream.close();
-            outputStream.close();
+    public void stopListening() {
+        setState(State.CLOSED);
+
+        try {
+            dataInputStream.close();
+            dataOutputStream.close();
         } catch (IOException e) {
             e.printStackTrace();
         }
@@ -126,90 +161,10 @@ public class EncryptedDataStream {
         return null;
     }
 
-    public class ReceivePublicKeyThread extends Thread {
-        private KeyExchangeCallback callback;
-
-        public ReceivePublicKeyThread(KeyExchangeCallback callback) {
-            this.callback = callback;
-        }
-
-        @Override
-        public void run() {
-            try {
-                byte[] receivedPublicKeyBytes = new byte[inputStream.readInt()];
-                inputStream.readFully(receivedPublicKeyBytes);
-                final DHPublicKey receivedPublicKey = DHUtils.bytesToPublicKey(dhExchange.getPublicKey().getParams(), receivedPublicKeyBytes);
-                dhExchange.setReceivedPublicKey(receivedPublicKey);
-
-                sharedSecret = shortenSecretKey(dhExchange.generateCommonSecretKey());
-
-                secretKeySpec = new SecretKeySpec(sharedSecret, "DES");
-                cipher = Cipher.getInstance("DES/ECB/PKCS5Padding");
-                cipher.init(Cipher.ENCRYPT_MODE, secretKeySpec);
-
-                callback.onKeyExchangeCompleted();
-            } catch (IOException | InvalidKeyException | NoSuchAlgorithmException | NoSuchPaddingException e) {
-                callback.onKeyExchangeFailed(e);
-                setState(EncryptedDataStream.State.CLOSED);
-            }
-        }
-    }
-
-    public class SendPublicKeyThread extends Thread {
-        private KeyExchangeCallback callback;
-
-        public SendPublicKeyThread(KeyExchangeCallback callback) {
-            this.callback = callback;
-        }
-
-        @Override
-        public void run() {
-            try {
-                final byte[] encodedPublicKey = DHUtils.keyToBytes(dhExchange.getPublicKey());
-                outputStream.writeInt(encodedPublicKey.length);
-                outputStream.write(encodedPublicKey);
-            } catch (IOException e) {
-                callback.onKeyExchangeFailed(e);
-                setState(EncryptedDataStream.State.CLOSED);
-            }
-        }
-    }
-
-    public class InputStreamThread extends Thread {
-
-        @Override
-        public void run() {
-            final SecretKeySpec keySpec = new SecretKeySpec(sharedSecret, "DES");
-            final Cipher cipher;
-            try {
-                cipher = Cipher.getInstance("DES/ECB/PKCS5Padding");
-                cipher.init(Cipher.DECRYPT_MODE, keySpec);
-            } catch (NoSuchAlgorithmException | NoSuchPaddingException | InvalidKeyException e) {
-                listener.onStreamException(e);
-                return;
-            }
-
-            setState(EncryptedDataStream.State.LISTENING);
-
-            while (!interrupted()) {
-                try {
-                    if (inputStream.available() <= 0) continue;
-
-                    final byte[] data = new byte[inputStream.readInt()];
-                    inputStream.readFully(data);
-                    listener.onDataReceived(cipher.doFinal(data));
-                } catch (IOException | BadPaddingException | IllegalBlockSizeException e) {
-                    listener.onStreamException(e);
-                    setState(EncryptedDataStream.State.CLOSED);
-                    return;
-                }
-            }
-        }
-    }
-
     public enum State {
         NOT_EXCHANGED,
         EXCHANGING,
+        EXCHANGED,
         LISTENING,
         CLOSED
     }

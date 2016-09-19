@@ -107,6 +107,14 @@ public class MainService extends WearableListenerService implements GoogleApiCli
     }
 
     @Override
+    public void onInputClosed(Channel channel, int i, int i1) {
+        super.onInputClosed(channel, i, i1);
+        if(encryptedDataStream != null){
+            encryptedDataStream.stopListening();
+        }
+    }
+
+    @Override
     public void onStateChanged(EncryptedDataStream.State newState) {
         Log.d(TAG, newState.name());
     }

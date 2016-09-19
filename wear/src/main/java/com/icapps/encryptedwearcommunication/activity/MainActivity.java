@@ -135,8 +135,13 @@ public class MainActivity extends Activity implements ChannelApi.ChannelListener
             public void onResult(@NonNull final Channel.GetOutputStreamResult getOutputStreamResult) {
                 channel.getInputStream(googleApiClient).setResultCallback(new ResultCallback<Channel.GetInputStreamResult>() {
                     @Override
-                    public void onResult(@NonNull Channel.GetInputStreamResult getInputStreamResult) {
-                        onStreamsOpened(getInputStreamResult.getInputStream(), getOutputStreamResult.getOutputStream());
+                    public void onResult(@NonNull final Channel.GetInputStreamResult getInputStreamResult) {
+                        new Thread(new Runnable() {
+                            @Override
+                            public void run() {
+                                onStreamsOpened(getInputStreamResult.getInputStream(), getOutputStreamResult.getOutputStream());
+                            }
+                        }).start();
                     }
                 });
             }
@@ -165,6 +170,9 @@ public class MainActivity extends Activity implements ChannelApi.ChannelListener
 
     @Override
     public void onInputClosed(Channel channel, int i, int i1) {
+        if(encryptedDataStream != null){
+            encryptedDataStream.stopListening();
+        }
         Log.d(TAG, "Input closed");
     }
 
