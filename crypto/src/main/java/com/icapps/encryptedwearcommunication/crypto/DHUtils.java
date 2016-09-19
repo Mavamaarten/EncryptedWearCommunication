@@ -18,7 +18,6 @@ import javax.crypto.interfaces.DHKey;
 import javax.crypto.interfaces.DHPrivateKey;
 import javax.crypto.interfaces.DHPublicKey;
 import javax.crypto.spec.DHParameterSpec;
-import javax.crypto.spec.DHPrivateKeySpec;
 import javax.crypto.spec.DHPublicKeySpec;
 
 /**
@@ -227,31 +226,6 @@ public class DHUtils {
     }
 
     /**
-     * Create a {@link DHPrivateKey} from a byte array.
-     *
-     * @param parameterSpec The {@link DHParameterSpec} to use.
-     * @param bytes         The key bytes.
-     *
-     * @return A {@link DHPrivateKey} object.
-     */
-    public static DHPrivateKey bytesToPrivateKey(DHParameterSpec parameterSpec, byte[] bytes){
-		/* Set X (private key), P and G values. */
-        KeySpec keySpec = new DHPrivateKeySpec(
-                bytesToBigInteger(bytes),
-                parameterSpec.getP(),
-                parameterSpec.getG()
-        );
-
-		/* Generate private key from key spec */
-        try{
-            return (DHPrivateKey)keyFactory.generatePrivate(keySpec);
-        }
-        catch(InvalidKeySpecException e){
-            throw new RuntimeException(e);
-        }
-    }
-
-    /**
      * A class holding Diffie-Hellman private and public keys.
      *
      * @author Felix
@@ -298,14 +272,6 @@ public class DHUtils {
             return this.privateKey;
         }
 
-        /**
-         * Get the private key as a byte array.
-         *
-         * @return A byte array representation of the private key.
-         */
-        public byte[] getPrivateKeyBytes(){
-            return keyToBytes(this.privateKey);
-        }
 
         /**
          * Get the public key.
@@ -314,15 +280,6 @@ public class DHUtils {
          */
         public DHPublicKey getPublicKey(){
             return this.publicKey;
-        }
-
-        /**
-         * Get the public key as a byte array.
-         *
-         * @return A byte array representation of the public key.
-         */
-        public byte[] getPublicKeyBytes(){
-            return keyToBytes(this.publicKey);
         }
     }
 }
