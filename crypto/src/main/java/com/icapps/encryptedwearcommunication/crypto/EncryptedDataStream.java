@@ -12,12 +12,15 @@ import java.security.spec.AlgorithmParameterSpec;
 import javax.crypto.Cipher;
 import javax.crypto.SecretKey;
 import javax.crypto.interfaces.DHPublicKey;
-import javax.crypto.spec.IvParameterSpec;
+import javax.crypto.spec.GCMParameterSpec;
 
 /**
  * Created by maartenvangiel on 16/09/16.
  */
 public class EncryptedDataStream {
+    public static final int GCM_NONCE_LENGTH = 12; // in bytes
+    public static final int GCM_TAG_LENGTH = 16; // in bytes
+
     private StreamListener listener;
 
     private DataInputStream dataInputStream;
@@ -52,14 +55,13 @@ public class EncryptedDataStream {
 
         try {
             // Generate a random IV
-            final byte[] iv = new byte[16];
+            final byte[] iv = new byte[GCM_NONCE_LENGTH];
             secureRandom.nextBytes(iv);
 
             // Initialize our cipher using the IV and encrypt the data with it
-            final AlgorithmParameterSpec algorithmParameterSpec = new IvParameterSpec(iv);
-            final Cipher encryptCipher = Cipher.getInstance("AES/CBC/PKCS5Padding");
+            final AlgorithmParameterSpec algorithmParameterSpec = new GCMParameterSpec(GCM_TAG_LENGTH * 8, iv);
+            final Cipher encryptCipher = Cipher.getInstance("AES/GCM/NoPadding");
             encryptCipher.init(Cipher.ENCRYPT_MODE, sharedSecret, algorithmParameterSpec);
-
             final byte[] encryptedData = encryptCipher.doFinal(data);
 
             dataOutputStream.writeInt(encryptedData.length);
@@ -127,12 +129,12 @@ public class EncryptedDataStream {
                 dataInputStream.readFully(data);
 
                 // Read the IV
-                final byte[] iv = new byte[16];
+                final byte[] iv = new byte[GCM_NONCE_LENGTH];
                 dataInputStream.readFully(iv);
 
                 // Initialize cipher using IV and decrypt the data
-                final AlgorithmParameterSpec algorithmParameterSpec = new IvParameterSpec(iv);
-                final Cipher decryptCipher = Cipher.getInstance("AES/CBC/PKCS5Padding");
+                final AlgorithmParameterSpec algorithmParameterSpec = new GCMParameterSpec(GCM_TAG_LENGTH * 8, iv);
+                final Cipher decryptCipher = Cipher.getInstance("AES/GCM/NoPadding");
                 decryptCipher.init(Cipher.DECRYPT_MODE, sharedSecret, algorithmParameterSpec);
 
                 listener.onDataReceived(decryptCipher.doFinal(data));
