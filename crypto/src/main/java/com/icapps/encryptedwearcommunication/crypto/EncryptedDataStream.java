@@ -5,20 +5,25 @@ import java.io.DataOutputStream;
 import java.io.IOException;
 import java.io.InputStream;
 import java.io.OutputStream;
+import java.security.InvalidAlgorithmParameterException;
 import java.security.InvalidKeyException;
 import java.security.NoSuchAlgorithmException;
+import java.security.spec.AlgorithmParameterSpec;
 
 import javax.crypto.BadPaddingException;
 import javax.crypto.Cipher;
 import javax.crypto.IllegalBlockSizeException;
 import javax.crypto.NoSuchPaddingException;
+import javax.crypto.SecretKey;
 import javax.crypto.interfaces.DHPublicKey;
-import javax.crypto.spec.SecretKeySpec;
+import javax.crypto.spec.IvParameterSpec;
 
 /**
  * Created by maartenvangiel on 16/09/16.
  */
 public class EncryptedDataStream {
+
+    private byte[] AES_IV = {43, 59, 40, 72, 64, 66, 28, 101, 58, 17, 12, 35, 54, 55, 32, 118};
 
     private StreamListener listener;
 
@@ -29,7 +34,7 @@ public class EncryptedDataStream {
     private Cipher encryptCipher;
     private Cipher decryptCipher;
 
-    private byte[] sharedSecret;
+    private SecretKey sharedSecret;
     private State state = State.NOT_EXCHANGED;
 
     public EncryptedDataStream(InputStream inputStream, OutputStream outputStream, int keySize, StreamListener listener) {
@@ -55,6 +60,7 @@ public class EncryptedDataStream {
 
         try {
             final byte[] encryptedData = encryptCipher.doFinal(data);
+
             dataOutputStream.writeInt(encryptedData.length);
             dataOutputStream.write(encryptedData);
         } catch (Exception ex) {
@@ -92,14 +98,16 @@ public class EncryptedDataStream {
 
         // Generate common secret
         try {
-            sharedSecret = shortenSecretKey(dhExchange.generateCommonSecretKey()); // generate key and shorten to 8 bytes for DES
+            sharedSecret = dhExchange.generateCommonSecretKey();
 
-            final SecretKeySpec secretKeySpec = new SecretKeySpec(sharedSecret, "DES");
-            encryptCipher = Cipher.getInstance("DES/ECB/PKCS5Padding");
-            encryptCipher.init(Cipher.ENCRYPT_MODE, secretKeySpec);
-            decryptCipher = Cipher.getInstance("DES/ECB/PKCS5Padding");
-            decryptCipher.init(Cipher.DECRYPT_MODE, secretKeySpec);
-        } catch (NoSuchPaddingException | NoSuchAlgorithmException | InvalidKeyException ex) {
+            final AlgorithmParameterSpec algorithmParameterSpec = new IvParameterSpec(AES_IV);
+
+            encryptCipher = Cipher.getInstance("AES/CBC/PKCS5Padding");
+            encryptCipher.init(Cipher.ENCRYPT_MODE, sharedSecret, algorithmParameterSpec);
+
+            decryptCipher = Cipher.getInstance("AES/CBC/PKCS5Padding");
+            decryptCipher.init(Cipher.DECRYPT_MODE, sharedSecret, algorithmParameterSpec);
+        } catch (NoSuchPaddingException | NoSuchAlgorithmException | InvalidKeyException | InvalidAlgorithmParameterException ex) {
             callback.onKeyExchangeFailed(ex);
             return;
         }
@@ -150,16 +158,6 @@ public class EncryptedDataStream {
         }
     }
 
-    private byte[] shortenSecretKey(final byte[] longKey) {
-        try {
-            final byte[] shortenedKey = new byte[8];
-            System.arraycopy(longKey, 0, shortenedKey, 0, shortenedKey.length);
-            return shortenedKey;
-        } catch (Exception e) {
-            e.printStackTrace();
-        }
-        return null;
-    }
 
     public enum State {
         NOT_EXCHANGED,

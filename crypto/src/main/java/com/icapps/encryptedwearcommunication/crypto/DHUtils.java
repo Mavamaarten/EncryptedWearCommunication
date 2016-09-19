@@ -13,6 +13,7 @@ import java.security.spec.KeySpec;
 import java.util.Arrays;
 
 import javax.crypto.KeyAgreement;
+import javax.crypto.SecretKey;
 import javax.crypto.interfaces.DHKey;
 import javax.crypto.interfaces.DHPrivateKey;
 import javax.crypto.interfaces.DHPublicKey;
@@ -126,7 +127,7 @@ public class DHUtils {
      *
      * @return The shared key as a byte array.
      */
-    public static byte[] computeSharedKey(DHPrivateKey privateKey, DHPublicKey publicKey){
+    public static SecretKey computeSharedKeyForAES(DHPrivateKey privateKey, DHPublicKey publicKey){
 		/* Check if key agreement is instantiated. */
         if(keyAgreement == null){
             throw new RuntimeException("KeyAgreement not instantiated!");
@@ -142,7 +143,11 @@ public class DHUtils {
         }
 
 		/* Return shared key. */
-        return keyAgreement.generateSecret();
+        try {
+            return keyAgreement.generateSecret("AES");
+        } catch (NoSuchAlgorithmException | InvalidKeyException e) {
+            throw new RuntimeException(e);
+        }
     }
 
     /**

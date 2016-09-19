@@ -1,5 +1,6 @@
 package com.icapps.encryptedwearcommunication.crypto;
 
+import javax.crypto.SecretKey;
 import javax.crypto.interfaces.DHPrivateKey;
 import javax.crypto.interfaces.DHPublicKey;
 
@@ -30,7 +31,7 @@ public class DHExchange {
         this.receivedPublicKey = receivedPublicKey;
     }
 
-    public byte[] generateCommonSecretKey() {
-        return DHUtils.computeSharedKey(privateKey, receivedPublicKey);
+    public SecretKey generateCommonSecretKey() {
+        return DHUtils.computeSharedKeyForAES(privateKey, receivedPublicKey);
     }
 }
