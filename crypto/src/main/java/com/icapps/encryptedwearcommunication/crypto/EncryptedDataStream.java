@@ -18,8 +18,8 @@ import javax.crypto.spec.GCMParameterSpec;
  * Created by maartenvangiel on 16/09/16.
  */
 public class EncryptedDataStream {
-    public static final int GCM_NONCE_LENGTH = 12; // in bytes
-    public static final int GCM_TAG_LENGTH = 16; // in bytes
+    private static final int GCM_NONCE_LENGTH = 12; // in bytes
+    private static final int GCM_TAG_LENGTH = 16; // in bytes
 
     private StreamListener listener;
 
@@ -62,6 +62,8 @@ public class EncryptedDataStream {
             final AlgorithmParameterSpec algorithmParameterSpec = new GCMParameterSpec(GCM_TAG_LENGTH * 8, iv);
             final Cipher encryptCipher = Cipher.getInstance("AES/GCM/NoPadding", "BC");
             encryptCipher.init(Cipher.ENCRYPT_MODE, sharedSecret, algorithmParameterSpec);
+            encryptCipher.updateAAD("Authentication".getBytes());
+
             final byte[] encryptedData = encryptCipher.doFinal(data);
 
             dataOutputStream.writeInt(encryptedData.length);
@@ -136,6 +138,7 @@ public class EncryptedDataStream {
                 final AlgorithmParameterSpec algorithmParameterSpec = new GCMParameterSpec(GCM_TAG_LENGTH * 8, iv);
                 final Cipher decryptCipher = Cipher.getInstance("AES/GCM/NoPadding", "BC");
                 decryptCipher.init(Cipher.DECRYPT_MODE, sharedSecret, algorithmParameterSpec);
+                decryptCipher.updateAAD("Authentication".getBytes());
 
                 listener.onDataReceived(decryptCipher.doFinal(data));
             } catch (IOException | GeneralSecurityException e) {

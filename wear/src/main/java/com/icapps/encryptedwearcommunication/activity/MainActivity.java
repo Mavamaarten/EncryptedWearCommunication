@@ -51,8 +51,12 @@ public class MainActivity extends Activity implements ChannelApi.ChannelListener
             @Override
             public void onClick(View view) {
                 if (encryptedDataStream == null) return;
-                if (encryptedDataStream.getState() != EncryptedDataStream.State.LISTENING)
+                if (encryptedDataStream.getState() != EncryptedDataStream.State.LISTENING){
+                    if(encryptedDataStream.getState() == EncryptedDataStream.State.CLOSED){
+                        tryOpenChannel();
+                    }
                     return;
+                }
 
                 try {
                     String messageToSend = "Ping! " + ++pingRequestCount;
@@ -171,6 +175,7 @@ public class MainActivity extends Activity implements ChannelApi.ChannelListener
     @Override
     public void onChannelClosed(Channel channel, int i, int i1) {
         Log.d(TAG, "Channel closed");
+        mTextView.setText(R.string.click_reconnect);
     }
 
     @Override
@@ -195,6 +200,7 @@ public class MainActivity extends Activity implements ChannelApi.ChannelListener
             public void run() {
                 if (newState == EncryptedDataStream.State.LISTENING) {
                     mTextView.setVisibility(View.VISIBLE);
+                    mTextView.setText("Connected! Click me to send a msg");
                     mProgressBar.setVisibility(View.GONE);
                 }
             }
@@ -215,5 +221,6 @@ public class MainActivity extends Activity implements ChannelApi.ChannelListener
     @Override
     public void onStreamException(Exception ex) {
         Log.d(TAG, "Stream exception", ex);
+        mTextView.setText("Stream exception :'(");
     }
 }
