@@ -87,8 +87,13 @@ public class MainService extends WearableListenerService implements GoogleApiCli
             public void onResult(@NonNull final Channel.GetOutputStreamResult getOutputStreamResult) {
                 channel.getInputStream(mGoogleApiClient).setResultCallback(new ResultCallback<Channel.GetInputStreamResult>() {
                     @Override
-                    public void onResult(@NonNull Channel.GetInputStreamResult getInputStreamResult) {
-                        onStreamsOpened(getInputStreamResult.getInputStream(), getOutputStreamResult.getOutputStream());
+                    public void onResult(@NonNull final Channel.GetInputStreamResult getInputStreamResult) {
+                        new Thread(new Runnable() {
+                            @Override
+                            public void run() {
+                                onStreamsOpened(getInputStreamResult.getInputStream(), getOutputStreamResult.getOutputStream());
+                            }
+                        }).start();
                     }
                 });
             }

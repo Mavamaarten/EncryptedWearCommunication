@@ -156,6 +156,10 @@ public class EncryptedDataStream {
 
         try {
             dataInputStream.close();
+        } catch (IOException e) {
+            e.printStackTrace();
+        }
+        try {
             dataOutputStream.close();
         } catch (IOException e) {
             e.printStackTrace();
